@@ -1,0 +1,472 @@
+---
+title: "Athlete Data Report"
+author: "Eric Slattery"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: word_document
+---
+
+```{r setup, include=F}
+knitr::opts_chunk$set(echo = F)
+
+# Load Libraries
+library(dplyr)
+library(ggplot2)
+library(plot3D)
+library(knitr)
+library(readxl)
+library(tidyverse)
+library(validate)
+library(writexl)
+library(xtable)
+
+setwd("G:/Other Computers/My Laptop/Class Documents/KNH 402/Athlete Study (KNH 402)/")
+
+
+################################################
+##### Load Data for Miss/Bad Data Analysis #####
+################################################
+df2 <- data.frame(read_xlsx("G:/Other Computers/My Laptop/Class Documents/KNH 402/Athlete Study (KNH 402)/Data Sheet (v2.0).xlsx",sheet=1))
+
+##### Split data by date. WARNING!!! If you use this and want to work with the full data set again, you'll have to reload it.
+# df2 <- df2[df2$TestDate >= "2021-02-22" & df2$TestDate <= "2021-04-27",]  # Spring 2021 Data only
+# df2 <- df2[df2$TestDate >= "2021-07-11" & df2$TestDate <= "2021-11-20",]  # Fall 2021 Data only
+
+# Today only. (i.e. run a report of today's data collection)
+
+#df2$TestDate = as.Date(df2$TestDate)
+#df2 <- df2[df2$TestDate == "2022-03-17",]
+
+# full data
+
+df2 <- df2[df2$TestDate >= "2021-02-22" ,]
+
+# Create and/or Set Directory based on Date range for report
+if(length(unique(df2$TestDate)) >= 2) {
+  minM <- format(min(df2$TestDate), "%m")
+  minD <- format(min(df2$TestDate), "%d")
+  minY <- format(min(df2$TestDate), "%Y")
+  maxM <- format(max(df2$TestDate), "%m")
+  maxD <- format(max(df2$TestDate), "%d")
+  maxY <- format(max(df2$TestDate), "%Y")
+  wd <- paste("G:/Other Computers/My Laptop/Class Documents/KNH 402/Athlete Study (KNH 402)/Class Reports/Report ",minY,".",minM,".",minD," - ",maxY,".",maxM,".",minD, "/",sep="")
+  if(dir.exists(wd) == TRUE) {
+    setwd(wd)
+  } else {
+    dir.create(wd)
+    setwd(wd)
+  }
+} else {
+  M <- format(df2$TestDate,"%m")[1]; D <- format(df2$TestDate,"%d")[1]; Y <- format(df2$TestDate,"%Y")[1]
+  wd <- paste("G:/Other Computers/My Laptop/Class Documents/KNH 402/Athlete Study (KNH 402)/Class Reports/Report ",Y,".",M,".",D,"/",sep="")
+  if(dir.exists(wd) == TRUE) {
+    setwd(wd)
+  } else {
+    dir.create(wd)
+    setwd(wd)
+  }
+}
+
+# Date Range for Report
+if(length(unique(df2$TestDate)) >= 2) { 
+  minDate <- min(as.Date(df2$TestDate))
+  maxDate <- max(as.Date(df2$TestDate))
+  dr1 <- paste("from ",format(minDate,'%A %B %d, %Y'), " to ", format(maxDate,'%A %B %d, %Y'))
+} else {
+  minDate = as.Date(df2$TestDate)
+  dr1 <- paste("on ", format(minDate,'%A %B %d, %Y'))
+}
+
+# Report generation vs day
+if(length(unique(df2$TestDate)) >= 2) {
+  dr2 <- "Between these dates, "
+} else if (as.Date(df2$TestDate) == Sys.Date()) {
+  dr2 <- "Today, "
+} else {
+  dr2 <- "On this date, "
+}
+
+##############################################
+##### Validate Data (check for bad data) #####
+##############################################
+
+#### Blood Pressure processing for validation
+comp1 <- df2 %>%
+  drop_na(HR1) %>%
+  group_by(ID,TestDate) %>%
+  summarise(AveHR,AveSBP,AveDBP)
+hr1 <- df2 %>%
+  drop_na(HR1) %>%
+  group_by(ID,TestDate) %>%
+  gather(HRM,HR,HR1:HR4) %>%
+  summarise(hrave = mean(HR,na.rm=TRUE))
+sbp1 <- df2 %>%
+  drop_na(SBP1) %>%
+  group_by(ID,TestDate) %>%
+  gather(SBPM,SBP,SBP1:SBP4) %>%
+  summarise(sbpave = mean(SBP,na.rm=TRUE))
+dbp1 <- df2 %>%
+  drop_na(DBP1) %>%
+  group_by(ID,TestDate) %>%
+  gather(DBPM,DBP,DBP1:DBP4) %>%
+  summarise(dbpave = mean(DBP,na.rm=TRUE))
+
+timediff <- as.numeric((df2$Date.TimeOfBloodLipidMeasurement-df2$Date.TimeOfLastMeal))
+psmm <- (df2$IB.SMM/df2$IB.Weight)*100
+
+##### Tanita Scale processing for validation
+df2tsas <- df2 %>% drop_na(TS.AS.Weight)   # Drop People missing Tanita Scale Athletic measurements
+tsash <- sqrt(df2tsas$TS.AS.Weight/df2tsas$TS.AS.BMI)*100
+tsashdiff <- round(df2tsas$A.Height,2) - round(tsash,2) # Used to check if height used in Tanita Scale (Athletic Setting) is within +/- 1 cm of Anthropometry measured height
+df2tsss <- df2 %>% drop_na(TS.SS.Weight)   # Drop People missing Tanita Scale Standard measurements
+tsssh <- sqrt(df2tsss$TS.SS.Weight/df2tsss$TS.SS.BMI)*100
+tssshdiff <- round(df2tsss$A.Height,2) - round(tsssh,2) # Used to check if height used in Tanita Scale (Standard Setting) is within +/- 1 cm of Anthropometry measured height
+ltsdiff <- abs(df2$TS.SS.Weight-df2$TS.AS.Weight)
+ts <- sum(na.omit(ltsdiff) >= 0.2)       # amount of Athlete's whose weight measurements on Tanita differed by > or = 0.2kg. This indicates something happened between measurements (putting stuff in pockets/clothes back on)
+
+# validate that calculated variables match
+rules1 <- validator(comp1$AveHR == hr1$hrave, 
+                    comp1$AveSBP == sbp1$sbpave, 
+                    comp1$AveDBP == dbp1$dbpave, 
+                    round(df2$TimeDifference..hours.,2) == round(timediff,2), 
+                    round(df2$IB.PSMM,2) == round(psmm,2))
+out1 <- confront(comp1, rules1)
+summary(out1)
+
+# verify measurements are within expected physiological limits
+rules2 <- validator(Sex == "M" | Sex == "F",
+                    DominantHand == "R" | DominantHand == "L" | DominantHand == "A",
+                    SBP1 >= 75 & SBP1 <= 180, 
+                    SBP2 >= 75 & SBP2 <= 180, 
+                    SBP3 >= 75 & SBP3 <= 180, 
+                    SBP4 >= 75 & SBP4 <= 180, 
+                    DBP1 >= 40 & DBP1 <= 110, 
+                    DBP2 >= 40 & DBP2 <= 110, 
+                    DBP3 >= 40 & DBP3 <= 110, 
+                    DBP4 >= 40 & DBP4 <= 110, 
+                    HR1 >= 40 & HR1 <= 120, 
+                    HR2 >= 40 & HR2 <= 120, 
+                    HR3 >= 40 & HR3 <= 120, 
+                    HR4 >= 40 & HR4 <= 120,
+                    A.Height <= 220 & A.Height >= 145, 
+                    A.NC <= 50 & A.NC >= 25, 
+                    A.NL <= 40 & A.NL >= 15, 
+                    A.WC <= 150 & A.WC >= 50, 
+                    A.AS <= 220 & A.AS >= 145, 
+                    A.AL <= 100 & A.AL >= 45,
+                    tsashdiff >= -1 & tsashdiff <= 1,
+                    tssshdiff >= -1 & tssshdiff <= 1,
+                    ltsdiff < 0.2)
+out2 <- confront(df2,rules2)
+summary(out2)
+dfout2 <- as.data.frame(out2)
+totalbad <- length(na.omit(dfout2$value))-sum(na.omit(dfout2$value))  # Number of fails caught by the validation check
+
+##################################################################
+##### Check number of missing repeat HR/SBP/DBP measurements #####
+##################################################################
+a1 <- df2 %>%
+  drop_na(HR1) %>%
+  group_by(ID,TestDate) %>%
+  replace_na(list(HR4=0)) %>%
+  summarise(HR4)
+a2 <- df2 %>%
+  drop_na(HR1) %>%
+  gather(HRM,HR,HR1:HR3) %>%
+  group_by(ID,TestDate) %>%
+  summarise(hrmax = max(HR,na.rm=TRUE),
+            hrmin = min(HR,na.rm=TRUE),
+            hrdiff = hrmax-hrmin)
+hr6 <- sum(a2$hrdiff > 10 & a1$HR4-a2$hrdiff < 1)
+
+b1 <- df2 %>%
+  drop_na(SBP1) %>%
+  group_by(ID,TestDate) %>%
+  replace_na(list(SBP4=0)) %>%
+  summarise(SBP4)
+b2 <- df2 %>%
+  drop_na(SBP1) %>%
+  gather(SBPM,SBP,SBP1:SBP3) %>%
+  group_by(ID,TestDate) %>%
+  summarise(sbpmax = max(SBP,na.rm=TRUE),
+            sbpmin = min(SBP,na.rm=TRUE),
+            sbpdiff = sbpmax-sbpmin)
+sbp6 <- sum(b2$sbpdiff > 10 & b1$SBP4-b2$sbpdiff < 1)
+
+c1 <- df2 %>%
+  drop_na(DBP1) %>%
+  group_by(ID,TestDate) %>%
+  replace_na(list(DBP4=0)) %>%
+  summarise(DBP4)
+c2 <- df2 %>% 
+  drop_na(DBP1) %>% 
+  gather(DBPM,DBP,DBP1:DBP3) %>% 
+  group_by(ID,TestDate) %>% 
+  summarise(dbpmax = max(DBP,na.rm=TRUE), 
+            dbpmin = min(DBP,na.rm=TRUE),
+            dbpdiff = dbpmax-dbpmin)
+dbp6 <- sum(c2$dbpdiff > 10 & c1$DBP4-c2$dbpdiff < 1)
+
+overall <- sum((a2$hrdiff > 10 & a1$HR4-a2$hrdiff < 1) | 
+               (b2$sbpdiff > 10 & b1$SBP4-b2$sbpdiff < 1) | 
+               (c2$dbpdiff > 10 & c1$DBP4-c2$dbpdiff < 1))
+
+# Missed  HR/SBP/DBP measurements
+lhr <- length(df2$HR1)
+df2hr <- df2 %>% drop_na(HR1)            # Drop people missing HR measurements
+hrbpex <- sum(na.omit(df2$HR.BPExcused)) # Used to omit those that were excused from BP
+hrmiss <- lhr-length(df2hr$HR1)-hrbpex
+
+lsbp <- length(df2$SBP1)
+df2sbp <- df2 %>% drop_na(SBP1)          # Drop people missing SBP measurements
+sbpmiss <- lsbp-length(df2sbp$SBP1)-hrbpex
+
+ldbp <- length(df2$DBP1)
+df2dbp <- df2 %>% drop_na(DBP1)          # Drop people missing DBP measurements
+dbpmiss <- ldbp-length(df2dbp$DBP1)-hrbpex
+
+# Missed Anthropometry numbers
+la.height <- length(df2$A.Height); df2aheight <- df2 %>% drop_na(A.Height)
+aex <- sum(na.omit(df2$AnthroExcused))   # Used to omit those that were excused from Anthropometry
+if(la.height-length(df2aheight$A.Height)-aex < 0){ aheightmiss = 0} else{aheightmiss <- la.height-length(df2aheight$A.Height)-aex}
+
+la.nc <- length(df2$A.NC); df2anc <- df2 %>% drop_na(A.NC)
+if(la.nc-length(df2anc$A.NC)-aex <0) {ancmiss = 0} else{ancmiss <- la.nc-length(df2anc$A.NC)-aex}
+
+la.nl <- length(df2$A.NL); df2anl <- df2 %>% drop_na(A.NL)
+if(la.nl-length(df2anl$A.NL)-aex <0){anlmiss = 0} else{anlmiss <- la.nl-length(df2anl$A.NL)-aex}
+
+la.wc <- length(df2$A.WC); df2awc <- df2 %>% drop_na(A.WC)
+if(la.wc-length(df2awc$A.WC)-aex <0){awcmiss = 0} else{awcmiss <- la.wc-length(df2awc$A.WC)-aex}
+
+la.as <- length(df2$A.AS); df2aas <- df2 %>% drop_na(A.AS)
+if(la.as-length(df2aas$A.AS)-aex <0){aasmiss = 0} else{aasmiss <- la.as-length(df2aas$A.AS)-aex}
+
+la.al <- length(df2$A.AL); df2aal <- df2 %>% drop_na(A.AL)
+if(la.al-length(df2aal$A.AL)-aex <0){aalmiss = 0} else{aalmiss <- la.al-length(df2aal$A.AL)-aex}
+
+miss.a <- sum(aheightmiss,ancmiss,anlmiss,awcmiss,aasmiss,aalmiss)
+
+lib <- length(df2$IB.Weight); df2ib <- df2 %>% drop_na(IB.Weight)
+exib <- sum(na.omit(df2$IBExcused))     # Used to omit those that were excused from InBody
+ibmiss <- lib-length(df2ib$IB.Weight)-exib #Amount of Athletes we missed measuring on InBody, barring any that are unable to do it
+
+lbp <- length(df2$BP.Weight); df2bp <- df2 %>% drop_na(BP.Weight)
+exbp <- sum(na.omit(df2$BPExcused))     # Used to omit those that were excused from BodPod
+bpmiss <- lbp-length(df2bp$BP.Weight)-exbp #Amount of Athletes we missed measuring on BodPod, barring any that are unable to do it
+
+lbl <- length(df2$Glucose); df2bl <- df2 %>% drop_na(Glucose); 
+exbl <- sum(na.omit(df2$BLExcused))     # Used to omit those that were excused from Blood Lipids
+blmiss <- lbl-length(df2bl$Glucose)-exbl # Amount of Athletes we missed measuring on Blood Lipids, barring any that are unable to do it
+
+lts.as <- length(df2$TS.AS.Weight); df2ts.as <- df2 %>% drop_na(TS.AS.Weight)
+exts <- sum(na.omit(df2$TanitaExcused)) # Used to omit those that were excused from Tanita Scale
+ts.asmiss <- lts.as-length(df2ts.as$TS.AS.Weight)-exts #Amount of Athletes we missed measuring on Tanita Scale Athletic Setting, barring any that are unable to do it
+
+lts.ss <- length(df2$TS.SS.Weight); df2ts.ss <- df2 %>% drop_na(TS.SS.Weight)
+exts <- sum(na.omit(df2$TanitaExcused))
+ts.ssmiss <- lts.ss-length(df2ts.ss$TS.SS.Weight)-exts #Amount of Athletes we missed measuring on Tanita Scale Standard Setting, barring any that are unable to do it
+
+totalmiss <- sum(ts.ssmiss,ts.asmiss,blmiss,bpmiss,ibmiss,miss.a,dbpmiss,sbpmiss,hrmiss,overall) # Total amount of missed measurements
+lhr1 <- length(df2$HR1); lhr2 <- length(df2$HR2); lhr3 <- length(df2$HR3); lhr4 <- length(df2$HR4)
+totalmeasure <- sum(lts.ss-exts,lts.as-exts,lbl,lbp-exbp,lib-exib,la.al-aex,la.as-aex,la.wc-aex,la.nl-aex,la.nc-aex,la.height-aex,lhr1-hrbpex,lhr2-hrbpex,lhr3-hrbpex,lhr4-hrbpex)
+percentbad <- (totalbad+totalmiss)/totalmeasure*100
+
+# Percent missed HR, SBP, and DBP, and total  4th measurement repeats missed
+phr6 <- hr6/length(df2$HR4)*100; psbp6 <- sbp6/length(df2$SBP4)*100
+pdbp6 <- dbp6/length(df2$DBP4)*100; poverall <- overall/length(df2$HR4)*100
+days <- length(unique(df2$TestDate)) # Number of days we've collected data on
+totalmiss/days          # Number of bad/missed measurements per testing day
+
+dhr6 <- hr6/days; dsbp6 <- sbp6/days; ddbp6 <- dbp6/days; doverall <- overall/days
+phrmiss <- hrmiss/lhr*100; psbpmiss <- sbpmiss/lsbp*100; pdbpmiss <- dbpmiss/ldbp*100
+dhrmiss <- hrmiss/days; dsbpmiss <- sbpmiss/days; ddbpmiss <- dbpmiss/days
+
+ndf <- data.frame(hr6,sbp6,dbp6,overall)
+names(ndf) <- c("HRrepeats","SBPrepeats","DBPrepeats","#ofRepeats")
+ndf2 <- data.frame(phr6,psbp6,pdbp6,poverall)
+names(ndf2) <- c("HRrepeats","SBPrepeats","DBPrepeats","#ofRepeats")
+ndf3 <- data.frame(dhr6,dsbp6,ddbp6,doverall)
+names(ndf3) <- c("HRrepeats","SBPrepeats","DBPrepeats","#ofRepeats")
+ndfbp <- rbind(ndf,ndf2,ndf3)
+row.names(ndfbp) <- c("# Missed","% Missed","Ave Missed/day")
+hrmiss2 <- data.frame(hrmiss,phrmiss,dhrmiss); row.names(hrmiss2) <- c("HR")
+sbpmiss2 <- data.frame(sbpmiss,psbpmiss,dsbpmiss); row.names(sbpmiss2) <- c("SBP")
+dbpmiss2 <- data.frame(dbpmiss,pdbpmiss,ddbpmiss); row.names(dbpmiss2) <- c("DBP")
+ndfbp <- cbind(ndfbp,t(hrmiss2),t(sbpmiss2),t(dbpmiss2))
+if(length(unique(df2$TestDate)) >= 2) {
+  filename1 <- paste("BP Missed table ",minY,".",minM,".",minD," - ",maxY,".",maxM,".",minD, ".csv",sep="")
+} else {
+  M <- format(df2$TestDate,"%m")[1]; D <- format(df2$TestDate,"%d")[1]; Y <- format(df2$TestDate,"%Y")[1]
+  filename1 <- paste("BP Missed table ",Y,".",M,".",D,".csv",sep="")
+}
+write.csv(ndfbp,filename1)
+
+# Anthropometry missed Table
+paheight <- aheightmiss/la.height*100; panc <- ancmiss/la.nc*100; panl <- anlmiss/la.nl*100
+pawc <- awcmiss/la.wc*100; paas <- aasmiss/la.as*100; paal <- aalmiss/la.as*100
+daheight <- aheightmiss/days; danc <- ancmiss/days; danl <- anlmiss/days
+dawc <- awcmiss/days; daas <- aasmiss/days; daal <- aalmiss/days
+xdf <- data.frame(aheightmiss,ancmiss,anlmiss,awcmiss,aasmiss,aalmiss)
+names(xdf) <- c("Height","NeckCircum","NeckLength","WaistCircum","ArmSpan","ArmLength")
+xdf2 <- data.frame(paheight,panc,panl,pawc,paas,paal)
+names(xdf2) <- c("Height","NeckCircum","NeckLength","WaistCircum","ArmSpan","ArmLength")
+xdf3 <- data.frame(daheight,danc,danl, dawc,daas,daal)
+names(xdf3) <- c("Height","NeckCircum","NeckLength","WaistCircum","ArmSpan","ArmLength")
+xdfa <- rbind(xdf,xdf2,xdf3)
+row.names(xdfa) <- c("# Missed","% Missed","Ave Missed/day")
+if(length(unique(df2$TestDate)) >= 2) {
+  filename2 <- paste("Anthropometry missed table ",minY,".",minM,".",minD," - ",maxY,".",maxM,".",minD, ".csv",sep="")
+} else {
+  M <- format(df2$TestDate,"%m")[1]; D <- format(df2$TestDate,"%d")[1]; Y <- format(df2$TestDate,"%Y")[1]
+  filename2 <- paste("Anthropometry missed table ",Y,".",M,".",D,".csv",sep="")
+}
+write.csv(xdfa,filename2)
+
+# Body Comp and Blood Lipids missed Table
+pib <- ibmiss/lib*100; pbp <- bpmiss/lbp*100; ptsas <- ts.asmiss/lts.as*100
+ptsss <- ts.ssmiss/lts.ss*100; pts <- ts/lts.as*100; pbl <- blmiss/lbl*100
+dib <- ibmiss/days; dbp <- bpmiss/days; dtsas <- ts.asmiss/days; dtsss <- ts.ssmiss/days
+dts <- ts/days; dbl <- blmiss/days
+zdf <- data.frame(ibmiss,bpmiss,ts.asmiss,ts.ssmiss,ts,blmiss)
+names(zdf) <- c("InBody","BodPod","TSAthletic","TSStandard","TSDiff","BloodLipids")
+zdf2 <- data.frame(pib,pbp,ptsas,ptsss,pts,pbl)
+names(zdf2) <- c("InBody","BodPod","TSAthletic","TSStandard","TSDiff","BloodLipids")
+zdf3 <- data.frame(dib,dbp,dtsas,dtsss,dts,dbl)
+names(zdf3) <- c("InBody","BodPod","TSAthletic","TSStandard","TSDiff","BloodLipids")
+zdfa <- rbind(zdf,zdf2,zdf3)
+row.names(zdfa) <- c("# Missed","% Missed","Ave Missed/day")
+if(length(unique(df2$TestDate)) >= 2) {
+  filename3 <- paste("Body Comp and Blood Lipids missed table ",minY,".",minM,".",minD," - ",maxY,".",maxM,".",minD, ".csv",sep="")
+} else {
+  M <- format(df2$TestDate,"%m")[1]; D <- format(df2$TestDate,"%d")[1]; Y <- format(df2$TestDate,"%Y")[1]
+  filename3 <- paste("Body Comp and Blood Lipids missed table ",Y,".",M,".",D,".csv",sep="")
+}
+write.csv(zdfa,filename3)
+
+#############################################
+##### Load Data for Efficiency Analysis #####
+#############################################
+df3 <- data.frame(read_xlsx("G:/Other Computers/My Laptop/Class Documents/KNH 402/Athlete Study (KNH 402)/Data Sheet (v2.0).xlsx",sheet=5))
+
+##### Split data by date. WARNING!!! If you use this and want to work with the full data set again, you'll have to reload it.
+#df3 <- df3[df3$Date >= "2021-02-22" & df3$Date <= "2021-04-27",]  # Spring 2021 Data only
+#df3 <- df3[df3$Date >= "2021-07-11" & df3$Date <= "2021-11-20",]  # Fall 2021 Data only
+
+# Today only. (i.e. run a report of today's data collection)
+
+#df3$Date = as.Date(df3$Date)
+df3 <- df3[df3$Date >= "2021-02-22" ,]
+
+# or use this to set a custom range
+if(length(unique(df2$TestDate)) >= 2) {
+  df3 <- df3[df3$Date >= min(as.Date(df2$TestDate)) & df3$Date <= max(as.Date(df2$TestDate)),]
+} else {
+  df3 <- df3[df3$Date == max(as.Date(df2$TestDate)),]
+}
+
+# Showed Efficiency
+tot_show = sum(df3$Showed)
+tot_sched = sum(df3$Scheduled)
+tot_potential = sum(df3$TotalPotential)
+tot_miss_sched = sum(df3$MissedScheduled)
+tot_addons = sum(df3$Addons)
+tot_miss_sat = tot_potential - tot_sched # Saturation, did we fill all schedule spots? if >0, then yes.
+tot_missed = tot_miss_sched + tot_miss_sat # Missed on spots to fill and subjects not showing up
+
+
+eff.table = data.frame("show_eff" = tot_show/tot_sched*100,
+                       "sched_eff" = tot_sched/tot_potential*100,
+                       "no_show_eff" = tot_miss_sched/tot_sched*100,
+                       "miss_sat_percent" = tot_miss_sat/tot_potential*100,
+                       "tot_miss_percent" = tot_missed/tot_potential*100,
+                       "no_shows_perday" = tot_miss_sched/length(df3$Date))
+
+if(length(unique(df3$Date)) >= 2) {
+  filename5 <- paste("Efficiency table ",minY,".",minM,".",minD," - ",maxY,".",maxM,".",minD, ".csv",sep="")
+} else {
+  M <- format(df3$Date,"%m")[1]; D <- format(df3$Date,"%d")[1]; Y <- format(df3$Date,"%Y")[1]
+  filename3 <- paste("Efficiency table ",Y,".",M,".",D,".csv",sep="")
+}
+write.csv(eff.table,filename5)
+
+#######################################
+##### Load Data for Cost Analysis #####
+#######################################
+df6 <- data.frame(read_xlsx("G:/Other Computers/My Laptop/Class Documents/KNH 402/Athlete Study (KNH 402)/Data Sheet (v2.0).xlsx",sheet=4))
+
+Item = df6$Item[1:7]
+Item.A = df6$Item.Athlete[1:7]
+Cost.I = round(df6$Cost.Item[1:7],2)
+Cost.A = df6$Cost.Athlete[1:7]
+
+if(length(unique(df2$TestDate)) >= 2) {
+  df6 <- df6[df6$Date >= min(as.Date(df2$TestDate)) & df3$Date <= max(as.Date(df2$TestDate)),]
+} else {
+  df6 <- df6[df6$Date == max(as.Date(df2$TestDate)),]
+}    # Dates start on 2021-11-02, when we first started recording disposable usage.
+
+totAP <- sum(df6$AlcoholPads)
+totKW <- sum(df6$Kimwipes)
+totC <- sum(df6$Cartridges)
+totL <- sum(df6$Lancets)
+totG <- sum(df6$Gloves)
+totCT <- sum(df6$CapillaryTubes)
+totP <- sum(df6$Plundgers)
+subj <- length(df6$ID)
+
+usageE <- Item.A*subj
+usageA <- c(totAP,totKW,totC,totL,totG,totCT,totP)
+
+costE <- round(usageE*Cost.A,2)  # Cost/Item if we used the reference usage numbers
+costA <- round(usageA*Cost.A,2)  # Estimated cost/item based on actual usage numbers
+
+cost.usage <- data.frame("Item"=Item,
+                         "Item.Test"=Item.A,
+                         "Cost.Test"=Cost.I,
+                         "usageE"=usageE,
+                         "usageA"=usageA,
+                         "usageDiff"=usageA-usageE,
+                         "costE"=costE,
+                         "costA"=costA,
+                         "costDiff"=costA-costE)
+subtotal <- data.frame("Total",NA,round(sum(Cost.I),2),NA,NA,NA,sum(costE),sum(costA),sum(costA-costE))
+names(subtotal) <- c("Item","Item.Test","Cost.Test","usageE","usageA","usageDiff","costE","costA","costDiff")
+cost.usage <- rbind(cost.usage,subtotal)
+cost.usage[is.na(cost.usage)] = ""                    # Change NA to blanks
+if(length(unique(df2$TestDate)) >= 2) {
+  filename4 <- paste("Cost Analysis ",minY,".",minM,".",minD," - ",maxY,".",maxM,".",minD, ".csv",sep="")
+} else {
+  M <- format(df2$TestDate,"%m")[1]; D <- format(df2$TestDate,"%d")[1]; Y <- format(df2$TestDate,"%Y")[1]
+  filename4 <- paste("Cost Analysis ",Y,".",M,".",D,".csv",sep="")
+}
+write.csv(cost.usage,filename4)
+```
+
+## Overview
+
+This report summarizes the results for the data collected `r format(dr1)`. `r format(dr2)` we collected data on `r format(length(df2$ID))` athletes, with `r format(tot_miss_sched)` no shows.
+
+```{r, echo=F,message=F,warning=F}
+kable(ndfbp,digits=2,caption="Table 1. Missed BP Measurements and Repeats")  # Insert BP Missed table
+```
+Table 1 displays the the number and % of measurements made using the Automated Sphygmomanometer that were either missed, bad, or didn't do a repeat (4th measurement) when we needed to, per SOP. HR, SBP, and DBP have their own repeats, based on difference in high/low or trending of measurements, and the overall # of repeats that were missed. Sometimes, repeats are needed based on more than one of the measurements.
+
+```{r,echo=F,message=F,warning=F}
+kable(xdfa,digits=2,caption="Table 2. Missed Anthropometry Measurements")  # Insert Anthropometry Missed table
+```
+Table 2 displays the number and % of Anthropometric measurements that were either missed or bad, per SOP.
+
+```{r,echo=F,message=F,warning=F}
+kable(zdfa,digits=2,caption="Table 3. Missed Body Comp and Blood Lipid Measurements")  # Insert BodyComp and Blood Lipid Missed table
+```
+Table 3 displays the number and % of Body Comp and Blood Lipid Measurements that were either missed or bad, per SOP.
+
+```{r,echo=F,message=F,warning=F}
+kable(cost.usage,digits=2,caption="Table 4. Disposable usage and Cost Analysis")
+```
+Table 4 displays the amount of each disposable used, expected and actual amount of disposables that should be used, actual amount of disposables used, usage cost difference per test, cost based on reference amount of disposables that should be used, cost based on actual amount of disposables used, and the cost difference.
+
+```{r,echo=F,message=F,warning=F}
+kable(eff.table,digits=2,caption="Table 5. Recruitment Efficiency")
+```
+Table 5 displays the % of athletes that showed when scheduled. Sometimes, people forget that they were scheduled or the athletic department failed to schedule many people. It serves as a check of athletes coming to the lab and that the athletic department is maximizing scheduling when we're able to collect data.
